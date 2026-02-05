@@ -1,0 +1,7 @@
+You are analyzing casino player behavior to detect churn risk.
+
+{reason}
+
+Player: {player_type}, {consecutive_losses} consecutive losses, bet €{bet_amount} (typical: €{typical_bet}), bankroll change: {bankroll_change}%
+
+Is this early tilt or normal variance? Respond with only: FLAG or IGNORE

@@ -1,0 +1,422 @@
+"""
+Main player simulator orchestrator.
+
+Manages a population of simulated players:
+- Creates 100 players with realistic type distribution
+- Runs their sessions
+- Generates continuous bet stream
+- Tracks churn
+- Provides interface for agents to query/modify player state
+"""
+
+import asyncio
+import random
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from typing import Optional, List, Dict
+
+from .player_types import PlayerTypeProfile, PLAYER_TYPES, get_player_type
+from .behavior_models import PlayerBehaviorState, EmotionalState, ChurnReason
+from .event_generator import generate_bet_event, BetEventGenerator
+from backend.services.player_context_serializer import PlayerContextSerializer
+from backend.agents.monitor_agent import MonitorAgent
+
+@dataclass
+class SimulatedPlayer:
+
+    """A simulated player with type and current state."""
+
+    player_id: int
+    player_type: PlayerTypeProfile
+    behavior_state: PlayerBehaviorState
+
+    # Session management
+    is_active: bool = False  # Currently in a session
+    last_session_end: Optional[datetime] = None
+    next_session_start: Optional[datetime] = None
+
+    # Metadata
+    created_at: Optional[datetime] = None
+
+    def __post_init__(self):
+        
+        if self.created_at is None:
+            self.created_at = datetime.now(timezone.utc)
+
+
+class PlayerSimulator:
+
+    """
+    Orchestrates simulation of multiple players.
+
+    This is the main entry point for the simulation system.
+    """
+
+    def __init__(self, num_players: int = 100):
+
+        self.num_players = num_players
+        self.players: Dict[int, SimulatedPlayer] = {}
+        self.is_running = False
+
+        # Statistics
+        self.total_bets_generated = 0
+        self.total_interventions_applied = 0
+        self.churned_players: List[int] = []
+
+        # Monitor agent for detecting anomalies
+        self.monitor = MonitorAgent()
+
+    def initialize_players(self):
+
+        """
+        Create the player population with realistic distribution. Weighted random choice pattern.
+
+        Distribution (typical for casinos):
+        - 10% whales (high value, low volume)
+        - 30% grinders (medium value, high volume)
+        - 60% casuals (low value, high volume)
+
+        """
+        
+        print(f"Initializing {self.num_players} simulated players...")
+        
+        # So we can sample according to the player type distribution 
+        type_distribution = [
+            ("whale", 0.10),
+            ("grinder", 0.30),
+            ("casual", 0.60),
+        ]
+
+        for player_id in range(1, self.num_players + 1):
+
+            # Assign player type based on distribution
+            rand = random.random() # random float beetwen 0.0 and 1.0
+            cumulative = 0.0 # 0.10 
+            assigned_type = "casual"  # Default
+ 
+            for type_name, probability in type_distribution:
+                
+                cumulative += probability
+
+                # This is here so that we assign and choose the player based on the rand, (If rand = 0.07 → whale, because rand <= randn (0.15))
+                # If rand is not lower than current random number, we go the next player type and this probability accumulates
+                if rand <= cumulative:
+                    assigned_type = type_name
+                    break
+            
+            # This is here so we can pick the player type based on current assigned_type from previously
+            player_type = get_player_type(assigned_type)
+
+            # Initialize behavior state 
+            behavior_state = PlayerBehaviorState()
+            behavior_state.current_bankroll = player_type.typical_bankroll # initialize current bankroll state with the bankroll from player type
+            behavior_state.session_start_bankroll = player_type.typical_bankroll # initialize the current session start bankroll
+
+            # Create player
+            player = SimulatedPlayer(
+                player_id=player_id,
+                player_type=player_type,
+                behavior_state=behavior_state,
+            )
+
+            # Schedule first session randomly in next minute (for quick simulation start)
+            player.next_session_start = datetime.now(timezone.utc) + timedelta(
+                seconds=random.randint(0, 60)
+            )
+
+            self.players[player_id] = player
+
+        print(f"== Created {self.num_players} players ==")
+        print(f"  - Whales: {sum(1 for p in self.players.values() if p.player_type.type_name == 'whale')}")
+        print(f"  - Grinders: {sum(1 for p in self.players.values() if p.player_type.type_name == 'grinder')}")
+        print(f"  - Casuals: {sum(1 for p in self.players.values() if p.player_type.type_name == 'casual')}")
+
+
+    async def start_player_session(self, player: SimulatedPlayer):
+
+        """Start a new session for a player."""
+
+        player.is_active = True
+        player.behavior_state.start_new_session()
+        player.next_session_start = None
+
+        # print(f"[Player {player.player_id}] Started session (type: {player.player_type.type_name})")
+
+
+    async def end_player_session(self, player: SimulatedPlayer):
+
+        """End current session and schedule next one."""
+
+        player.is_active = False
+        player.last_session_end = datetime.now(timezone.utc)
+
+        # Calculate when next session should start based on frequency
+        # session_frequency_per_day = how many sessions per day
+        hours_between_sessions = 24.0 / player.player_type.session_frequency_per_day
+
+        # Add some variance (±50%)
+        actual_hours = hours_between_sessions * random.uniform(0.5, 1.5)
+
+        player.next_session_start = datetime.now(timezone.utc) + timedelta(hours=actual_hours)
+
+        session_stats = player.behavior_state.calculate_session_result()
+        # print(f"[Player {player.player_id}] Session ended: {session_stats['bets']} bets, €{session_stats['profit_loss']:.2f} P/L")
+
+
+    async def check_and_handle_churn(self, player: SimulatedPlayer) -> bool:
+
+        """
+        Check if player should churn and handle it.
+
+        Returns True if player churned, False otherwise.
+        """
+
+        should_churn, reason = player.behavior_state.should_churn(
+            base_churn_prob=player.player_type.base_churn_probability,
+            big_loss_multiplier=player.player_type.churn_after_big_loss_multiplier,
+            big_win_multiplier=player.player_type.churn_after_big_win_multiplier,
+        )
+
+        if should_churn:
+
+            player.behavior_state.mark_churned(reason)
+            player.is_active = False
+            self.churned_players.append(player.player_id)
+
+            print(f"[WARNING] [Player {player.player_id}] CHURNED - Reason: {reason.value}")
+            print(f"     Stats: €{player.behavior_state.net_profit_loss:.2f} P/L, {player.behavior_state.sessions_completed} sessions")
+
+            return True
+
+        return False
+
+
+    async def generate_bet_for_player(self, player: SimulatedPlayer) -> Optional[dict]:
+
+        """
+        Generate next bet for an active player.
+
+        Returns bet event dict or None if session ends.
+        """
+
+        if not player.is_active or player.behavior_state.has_churned:
+            return None
+
+        # Generate bet event
+        bet_event = generate_bet_event(
+            player_id=player.player_id,
+            player_type=player.player_type,
+            behavior_state=player.behavior_state,
+        )
+
+        if bet_event is None:
+            # Session should end
+            await self.end_player_session(player)
+            return None
+
+        self.total_bets_generated += 1
+
+        # Add serialized context for Monitor agent
+        bet_event["monitor_context"] = PlayerContextSerializer.to_monitor_context(player)
+
+        # Check for churn after each bet
+        await self.check_and_handle_churn(player)
+
+        return bet_event
+
+
+    async def simulation_tick(self) -> List[dict]:
+
+        """
+        Run one simulation tick.
+
+        - Start sessions for players whose time has come
+        - Generate bets for all active players
+        - Returns list of bet events generated this tick
+        """
+
+        now = datetime.now(timezone.utc)
+        events = []
+
+        for player in self.players.values():
+            # Skip churned players
+
+            if player.behavior_state.has_churned:
+                continue
+
+            # Check if it's time to start a new session
+            if not player.is_active and player.next_session_start and now >= player.next_session_start:
+                await self.start_player_session(player)
+
+            # Generate bet for active players
+            if player.is_active:
+
+                bet_event = await self.generate_bet_for_player(player)
+
+                if bet_event:
+                    events.append(bet_event)
+
+        return events
+
+    async def run_simulation(self, tick_interval_seconds: float = 1.0):
+
+        """
+        Run continuous simulation.
+
+        Generates bet events at specified tick interval.
+        """
+        
+        self.is_running = True
+        print(f"\nStarting simulation (tick interval: {tick_interval_seconds}s)")
+        print("=" * 60)
+
+        tick_count = 0
+
+        try:
+
+            while self.is_running:
+
+                tick_count += 1
+                events = await self.simulation_tick()
+
+                if events:
+                    await self.monitor.analyze_events(events)
+
+                    print(f"\n[Tick {tick_count}] Generated {len(events)} bet events")
+
+                    # # Sample: show a few events
+                    # for event in events[:3]:  # Show first 3
+                    #     if event['won']:
+                    #         print(f"  Player {event['player_id']}: €{event['bet_amount']} bet, "
+                    #               f"WON €{event['payout']:.2f} (net +€{event['net_result']:.2f}), "
+                    #               f"state: {event['emotional_state']}")
+                    #     else:
+                    #         print(f"  Player {event['player_id']}: €{event['bet_amount']} bet, "
+                    #               f"LOST (net -€{abs(event['net_result']):.2f}), "
+                    #               f"state: {event['emotional_state']}")
+
+                    # if len(events) > 3:
+                    #     print(f"  ... and {len(events) - 3} more bets")
+
+                if tick_count % 10 == 0:
+                    self.print_stats()
+
+                await asyncio.sleep(tick_interval_seconds)
+
+        except KeyboardInterrupt:
+
+            print("\n\nSimulation stopped by user")
+            self.is_running = False
+
+
+    def print_stats(self):
+
+        """Print current simulation statistics."""
+
+        active_players = sum(1 for p in self.players.values() if p.is_active)
+        churned_count = len(self.churned_players)
+        at_risk = sum(1 for p in self.players.values() if p.behavior_state.is_at_risk)
+
+        print(f"\nSimulation Stats:")
+        print(f"   Active sessions: {active_players}/{self.num_players}")
+        print(f"   Total bets: {self.total_bets_generated}")
+        print(f"   Churned players: {churned_count}")
+        print(f"   At-risk players: {at_risk}")
+        print(f"   Interventions applied: {self.total_interventions_applied}")
+
+
+    def get_player(self, player_id: int) -> Optional[SimulatedPlayer]:
+
+        """Get player by ID."""
+
+        return self.players.get(player_id)
+
+
+    def get_active_players(self) -> List[SimulatedPlayer]:
+
+        """Get all currently active players."""
+
+        return [p for p in self.players.values() if p.is_active]
+
+
+    def get_at_risk_players(self) -> List[SimulatedPlayer]:
+
+        """Get players flagged as at-risk by Monitor agent."""
+
+        return [p for p in self.players.values() if p.behavior_state.is_at_risk and not p.behavior_state.has_churned]
+
+
+    def get_player_context(self, player_id: int, context_type: str = "monitor") -> Optional[dict]:
+        
+        """
+        Get serialized context for a player.
+
+        Args:
+            player_id: Player ID
+            context_type: Type of context ("monitor", "predictor", "designer", "full")
+
+        Returns:
+            Serialized context dict or None if player not found
+        """
+
+        player = self.get_player(player_id)
+
+        if not player:
+            return None
+
+        if context_type == "monitor":
+            return PlayerContextSerializer.to_monitor_context(player)
+        
+        elif context_type == "predictor":
+            return PlayerContextSerializer.to_predictor_context(player)
+        
+        elif context_type == "designer":
+            return PlayerContextSerializer.to_designer_context(player)
+        
+        elif context_type == "full":
+            return PlayerContextSerializer.to_full_context(player)
+        
+        else:
+            return PlayerContextSerializer.to_monitor_context(player)
+
+
+    def get_at_risk_contexts(self) -> List[dict]:
+
+        """Get predictor contexts for all at-risk players."""
+
+        at_risk_players = self.get_at_risk_players()
+        return [PlayerContextSerializer.to_predictor_context(p) for p in at_risk_players]
+
+
+    def apply_intervention(self, player_id: int, intervention_type: str, amount: float) -> bool:
+        
+        """
+        Apply an intervention to a player (called by Executor agent).
+
+        Returns True if successful, False if player not found or already churned.
+        """
+
+        player = self.get_player(player_id)
+
+        if not player or player.behavior_state.has_churned:
+            return False
+
+        player.behavior_state.apply_intervention_effect(intervention_type, amount)
+        self.total_interventions_applied += 1
+
+        print(f"[OK] [Player {player_id}] Intervention applied: {intervention_type} €{amount}")
+
+        return True
+
+
+async def run_basic_simulation():
+
+    """Run a basic simulation for testing."""
+
+    simulator = PlayerSimulator(num_players=100)
+    simulator.initialize_players ()
+    await simulator.run_simulation(tick_interval_seconds=2.0)
+
+if __name__ == "__main__":
+    
+    asyncio.run(run_basic_simulation())

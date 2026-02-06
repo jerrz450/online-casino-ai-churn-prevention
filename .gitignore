@@ -34,3 +34,4 @@ Thumbs.db
 # Project specific
 frontend/node_modules/
 frontend/dist/
+claude_files/

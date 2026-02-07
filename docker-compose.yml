@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: casino_churn_db
+    environment:
+      POSTGRES_USER: ${POSTGRES_CASINO_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_CASINO_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_CASINO_DB}
+    ports:
+      - "5434:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./db_schema.sql:/docker-entrypoint-initdb.d/init.sql
+    restart: unless-stopped
+
+volumes:
+  postgres_data:

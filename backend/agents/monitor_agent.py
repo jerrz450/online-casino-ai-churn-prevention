@@ -12,11 +12,12 @@ LangGraph flow:
 
 from typing import TypedDict, List, Literal
 from langgraph.graph import StateGraph, END
-from backend.services.llm_service import get_llm
+from backend.services.external.llm_service import get_llm
+from backend.db.postgres import get_db
 from pathlib import Path
 from backend.agents.pydantic_models.monitor_models import MonitorDecision
+import json
 
-# State that flows through the graph
 class MonitorState(TypedDict):
 
     """State object passed between nodes."""
@@ -35,7 +36,8 @@ class MonitorAgent:
     """
 
     def __init__(self):
-
+        
+        self.db = get_db()
         self.graph = self._build_graph()
 
     def _build_graph(self):
@@ -80,52 +82,50 @@ class MonitorAgent:
         for event in events:
             ctx = event.get("monitor_context", {})
             player_id = ctx.get("player_id")
+            decision = "PASS"
 
-            # Rule 1: Tilting (clear signal)
-            if ctx.get("emotional_state") == "tilting":
-                flagged.append(player_id)
-                continue  
-
-            # Rule 2: Consecutive losses + bet escalation
             consecutive_losses = ctx.get("consecutive_losses", 0)
             bet_amount = event.get("bet_amount", 0)
             typical_bet = ctx.get("typical_bet", 0)
-
-            if consecutive_losses >= 5 and bet_amount > typical_bet * 2:
-                flagged.append(player_id)
-                continue  # Clear chasing pattern
-
-            # Rule 3: Bankroll crash (>30% loss)
             bankroll_change = ctx.get("bankroll_change_percent", 0)
-            if bankroll_change < -30:
 
+            if ctx.get("emotional_state") == "tilting":
                 flagged.append(player_id)
-                continue  # Clear danger signal
+                decision = "FLAG"
 
-            # Rule 4: Boredom (breaking even)
-            if ctx.get("emotional_state") == "bored":
+            elif consecutive_losses >= 5 and bet_amount > typical_bet * 2:
                 flagged.append(player_id)
-                continue  # Clear engagement issue
+                decision = "FLAG"
 
-            # Ambiguous case 1: Early tilt signals (2-3 losses + bet increase)
-            if consecutive_losses >= 2 and bet_amount > typical_bet * 1.2:
+            elif bankroll_change < -30:
+                flagged.append(player_id)
+                decision = "FLAG"
 
-                needs_llm = True
-                reason = f"Ambiguous: Player {player_id} early tilt signals (2+ losses, bet up 20%)"
+            elif ctx.get("emotional_state") == "bored":
+                flagged.append(player_id)
+                decision = "FLAG"
 
-            # Ambiguous case 2: Winning aggressively (could be confidence or overconfidence)
-            if ctx.get("emotional_state") == "winning" and bet_amount > typical_bet * 2.5:
-                needs_llm = True
-                reason = f"Ambiguous: Player {player_id} aggressive betting while winning"
+            else:
+                if consecutive_losses >= 2 and bet_amount > typical_bet * 1.2:
+                    needs_llm = True
+                    reason = f"Ambiguous: Player {player_id} early tilt signals"
 
-            # Ambiguous case 3: Moderate bankroll decline (15-25%)
-            # Not crash yet, but trending negative - worth LLM analysis
-            if -25 < bankroll_change < -15:
+                if ctx.get("emotional_state") == "winning" and bet_amount > typical_bet * 2.5:
+                    needs_llm = True
+                    reason = f"Ambiguous: Player {player_id} aggressive betting while winning"
 
-                needs_llm = True
-                reason = f"Ambiguous: Player {player_id} moderate bankroll decline ({bankroll_change:.1f}%)"
+                if -25 < bankroll_change < -15:
+                    needs_llm = True
+                    reason = f"Ambiguous: Player {player_id} moderate bankroll decline"
 
-        # update state
+            if player_id:
+                self.db.create_monitor_event(
+                    player_id=player_id,
+                    decision=decision,
+                    decision_source="rules",
+                    player_context=json.dumps(ctx)
+                )   
+
         state["flagged_players"] = list(set(flagged)) 
         state["needs_llm_analysis"] = needs_llm
         state["analysis_reason"] = reason
@@ -165,18 +165,25 @@ class MonitorAgent:
         )
 
         try:
+
             llm = get_llm()
             result = await llm.invoke_structured(prompt, MonitorDecision, max_tokens=10)
             decision: MonitorDecision = result  # type: ignore
+            player_id = ctx.get("player_id")
 
             if decision:
-                print(f"  LLM: {decision.decision}")
+                print(f"LLM: {decision.decision}")
 
                 if decision.decision == "FLAG":
-                    player_id = ctx.get("player_id")
-                    
                     if player_id:
                         state["flagged_players"].append(player_id)
+            
+            self.db.create_monitor_event(
+                player_id=player_id,
+                decision=decision.decision,
+                decision_source="llm",
+                player_context=json.dumps(ctx) 
+            )   
 
         except Exception as e:
             print(f"  LLM failed: {e}")
@@ -184,15 +191,20 @@ class MonitorAgent:
         return state
 
     async def analyze_events(self, events: List[dict]) -> List[int]:
-        """
-        Main entry point: analyze batch of events.
 
-        Args:
-            events: List of bet events with monitor_context
+        players_to_upsert = [
+            {
+                "player_id": event.get("monitor_context", {}).get("player_id"),
+                "player_type": event.get("monitor_context", {}).get("player_type", "unknown"),
+                "ltv": event.get("monitor_context", {}).get("total_wagered", 0.0)
+            }
+            for event in events
+            if event.get("monitor_context", {}).get("player_id")
+        ]
 
-        Returns:
-            List of player IDs flagged for intervention
-        """
+        if players_to_upsert:
+            self.db.upsert_players_batch(players_to_upsert)
+
         initial_state: MonitorState = {
             "events": events,
             "flagged_players": [],

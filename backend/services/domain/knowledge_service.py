@@ -3,11 +3,12 @@ from datetime import datetime
 from backend.services.external.embedding_service import get_embedding_service
 from backend.services.external.pinecone_service import get_pinecone_service
 from backend.services.domain.player_context_serializer import PlayerContextSerializer
-from backend.simulation.player_simulator import SimulatedPlayer
+from config.settings import PINECONE_NAMESPACE
 
 async def store_player_snapshot(
-    player: SimulatedPlayer, 
-    outcome: str = "pending") -> str:
+    player, 
+    outcome: str = "pending"
+) -> str:
 
     ctx = PlayerContextSerializer.to_predictor_context(player)
 
@@ -36,10 +37,11 @@ async def store_player_snapshot(
     }
 
     await get_pinecone_service().upsert([(snapshot_id, embedding, metadata)])
+    print("Stored to Pinecone successfully!")
 
     return snapshot_id
 
-async def query_similar_players(player: 'SimulatedPlayer', 
+async def query_similar_players(player, 
                                 top_k: int = 5) -> list:
 
     ctx = PlayerContextSerializer.to_predictor_context(player)
@@ -69,4 +71,5 @@ async def update_outcome(snapshot_id: str, outcome: str, intervention_worked: Op
 
     pinecone = get_pinecone_service()
 
-    await pinecone.index.update(id=snapshot_id, set_metadata=metadata_updates)
+    pinecone.index.update(id=snapshot_id, set_metadata=metadata_updates, namespace=PINECONE_NAMESPACE)
+    print(f"Updated snapshot {snapshot_id} to outcome={outcome}")

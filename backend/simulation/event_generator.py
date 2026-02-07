@@ -165,9 +165,10 @@ class BetEventGenerator:
             typical_length *= 1.2
 
         # Probabilistic end as we approach typical length
-        if bets_done >= typical_length:
-            # Higher probability the longer we go
-            end_probability = min(0.9, (bets_done / typical_length) * 0.3)
+        if bets_done >= typical_length * 0.8:
+            # Probability increases as we exceed typical length
+            progress = bets_done / typical_length
+            end_probability = min(0.95, (progress - 0.8) * 2.0)
             return random.random() < end_probability
 
         return False

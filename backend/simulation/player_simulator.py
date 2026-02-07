@@ -16,10 +16,11 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict
 
 from .player_types import PlayerTypeProfile, PLAYER_TYPES, get_player_type
-from .behavior_models import PlayerBehaviorState, EmotionalState, ChurnReason
-from .event_generator import generate_bet_event, BetEventGenerator
-from backend.services.player_context_serializer import PlayerContextSerializer
-from backend.agents.monitor_agent import MonitorAgent
+from .behavior_models import PlayerBehaviorState
+from .event_generator import generate_bet_event
+from backend.services.domain.player_context_serializer import PlayerContextSerializer
+from backend.orchestration.agent_coordinator import get_coordinator
+from ..services.domain.knowledge_service import store_player_snapshot, update_outcome
 
 @dataclass
 class SimulatedPlayer:
@@ -30,12 +31,11 @@ class SimulatedPlayer:
     player_type: PlayerTypeProfile
     behavior_state: PlayerBehaviorState
 
-    # Session management
-    is_active: bool = False  # Currently in a session
+    is_active: bool = False
     last_session_end: Optional[datetime] = None
     next_session_start: Optional[datetime] = None
+    last_snapshot_id: Optional[str] = None
 
-    # Metadata
     created_at: Optional[datetime] = None
 
     def __post_init__(self):
@@ -58,13 +58,11 @@ class PlayerSimulator:
         self.players: Dict[int, SimulatedPlayer] = {}
         self.is_running = False
 
-        # Statistics
         self.total_bets_generated = 0
         self.total_interventions_applied = 0
         self.churned_players: List[int] = []
 
-        # Monitor agent for detecting anomalies
-        self.monitor = MonitorAgent()
+        self.coordinator = get_coordinator(self)
 
     def initialize_players(self):
 
@@ -77,7 +75,7 @@ class PlayerSimulator:
         - 60% casuals (low value, high volume)
 
         """
-        
+
         print(f"Initializing {self.num_players} simulated players...")
         
         # So we can sample according to the player type distribution 
@@ -147,6 +145,8 @@ class PlayerSimulator:
 
         """End current session and schedule next one."""
 
+        player.last_snapshot_id = await store_player_snapshot(player, outcome='pending')
+
         player.is_active = False
         player.last_session_end = datetime.now(timezone.utc)
 
@@ -154,13 +154,13 @@ class PlayerSimulator:
         # session_frequency_per_day = how many sessions per day
         hours_between_sessions = 24.0 / player.player_type.session_frequency_per_day
 
-        # Add some variance (±50%)
+        # Add some variance (+/- 50%)
         actual_hours = hours_between_sessions * random.uniform(0.5, 1.5)
 
         player.next_session_start = datetime.now(timezone.utc) + timedelta(hours=actual_hours)
 
         session_stats = player.behavior_state.calculate_session_result()
-        # print(f"[Player {player.player_id}] Session ended: {session_stats['bets']} bets, €{session_stats['profit_loss']:.2f} P/L")
+        print(f"[Player {player.player_id}] Session ended: {session_stats['bets']} bets, €{session_stats['profit_loss']:.2f} P/L")
 
 
     async def check_and_handle_churn(self, player: SimulatedPlayer) -> bool:
@@ -179,12 +179,17 @@ class PlayerSimulator:
 
         if should_churn:
 
+            if player.is_active:
+                await self.end_player_session(player)
+
             player.behavior_state.mark_churned(reason)
-            player.is_active = False
             self.churned_players.append(player.player_id)
 
+            if player.last_snapshot_id:
+                await update_outcome(player.last_snapshot_id, outcome="churned")
+
             print(f"[WARNING] [Player {player.player_id}] CHURNED - Reason: {reason.value}")
-            print(f"     Stats: €{player.behavior_state.net_profit_loss:.2f} P/L, {player.behavior_state.sessions_completed} sessions")
+            print(f" Stats: €{player.behavior_state.net_profit_loss:.2f} P/L, {player.behavior_state.sessions_completed} sessions")
 
             return True
 
@@ -280,23 +285,27 @@ class PlayerSimulator:
                 events = await self.simulation_tick()
 
                 if events:
-                    await self.monitor.analyze_events(events)
+                    await self.coordinator.handle_events(events)
 
                     print(f"\n[Tick {tick_count}] Generated {len(events)} bet events")
 
                     # # Sample: show a few events
-                    # for event in events[:3]:  # Show first 3
-                    #     if event['won']:
-                    #         print(f"  Player {event['player_id']}: €{event['bet_amount']} bet, "
-                    #               f"WON €{event['payout']:.2f} (net +€{event['net_result']:.2f}), "
-                    #               f"state: {event['emotional_state']}")
-                    #     else:
-                    #         print(f"  Player {event['player_id']}: €{event['bet_amount']} bet, "
-                    #               f"LOST (net -€{abs(event['net_result']):.2f}), "
-                    #               f"state: {event['emotional_state']}")
+                    for event in events[:3]:  # Show first 3
 
-                    # if len(events) > 3:
-                    #     print(f"  ... and {len(events) - 3} more bets")
+                        if event['won']:
+
+                            print(f"  Player {event['player_id']}: €{event['bet_amount']} bet, "
+                                  f"WON €{event['payout']:.2f} (net +€{event['net_result']:.2f}), "
+                                  f"state: {event['emotional_state']}")
+
+                        else:
+
+                            print(f"  Player {event['player_id']}: €{event['bet_amount']} bet, "
+                                  f"LOST (net -€{abs(event['net_result']):.2f}), "
+                                  f"state: {event['emotional_state']}")
+
+                    if len(events) > 3:
+                        print(f"  ... and {len(events) - 3} more bets")
 
                 if tick_count % 10 == 0:
                     self.print_stats()
@@ -408,10 +417,7 @@ class PlayerSimulator:
 
         return True
 
-
 async def run_basic_simulation():
-
-    """Run a basic simulation for testing."""
 
     simulator = PlayerSimulator(num_players=100)
     simulator.initialize_players ()

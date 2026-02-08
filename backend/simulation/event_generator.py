@@ -19,7 +19,6 @@ from .behavior_models import PlayerBehaviorState, EmotionalState
 # Slots typically have 92-97% RTP, meaning house edge of 3-8%
 HOUSE_EDGE = 0.05  # 5% house edge = 95% RTP
 
-
 class BetEventGenerator:
 
     """Generates realistic bet events for a player."""

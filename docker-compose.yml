@@ -12,7 +12,26 @@ services:
       - "5434:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./db_schema.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./database/db_schema.sql:/docker-entrypoint-initdb.d/init.sql
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: casino_backend
+    depends_on:
+      - postgres
+    environment:
+      POSTGRES_CASINO_USER: ${POSTGRES_CASINO_USER}
+      POSTGRES_CASINO_PASSWORD: ${POSTGRES_CASINO_PASSWORD}
+      POSTGRES_CASINO_DB: ${POSTGRES_CASINO_DB}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      OPENAI_MODEL: ${OPENAI_MODEL}
+      PINECONE_API_KEY: ${PINECONE_API_KEY}
+      PINECONE_INDEX_NAME: ${PINECONE_INDEX_NAME}
     restart: unless-stopped
 
 volumes:

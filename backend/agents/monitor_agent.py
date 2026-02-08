@@ -12,8 +12,11 @@ LangGraph flow:
 
 from typing import TypedDict, List, Literal
 from langgraph.graph import StateGraph, END
+from langgraph.checkpoint.postgres import PostgresSaver
 from backend.services.external.llm_service import get_llm
+from backend.db.setup_checkpoints import connect_to_checkpoints
 from backend.db.postgres import get_db
+from backend.db.connection import get_engine
 from pathlib import Path
 from backend.agents.pydantic_models.monitor_models import MonitorDecision
 import json
@@ -36,9 +39,16 @@ class MonitorAgent:
     """
 
     def __init__(self):
-        
+
         self.db = get_db()
-        self.graph = self._build_graph()
+        self.checkpointer = None
+        self.graph = None
+
+    async def _ensure_initialized(self):
+
+        if self.graph is None:
+            self.checkpointer = await connect_to_checkpoints()
+            self.graph = self._build_graph()
 
     def _build_graph(self):
 
@@ -60,7 +70,7 @@ class MonitorAgent:
 
         workflow.add_edge("llm_call", END)
 
-        return workflow.compile()
+        return workflow.compile(checkpointer = self.checkpointer)
 
     def _deterministic_rule_check(self, state: MonitorState) -> MonitorState:
         
@@ -192,18 +202,7 @@ class MonitorAgent:
 
     async def analyze_events(self, events: List[dict]) -> List[int]:
 
-        players_to_upsert = [
-            {
-                "player_id": event.get("monitor_context", {}).get("player_id"),
-                "player_type": event.get("monitor_context", {}).get("player_type", "unknown"),
-                "ltv": event.get("monitor_context", {}).get("total_wagered", 0.0)
-            }
-            for event in events
-            if event.get("monitor_context", {}).get("player_id")
-        ]
-
-        if players_to_upsert:
-            self.db.upsert_players_batch(players_to_upsert)
+        await self._ensure_initialized()
 
         initial_state: MonitorState = {
             "events": events,
@@ -212,7 +211,8 @@ class MonitorAgent:
             "analysis_reason": ""
         }
 
-        final_state = await self.graph.ainvoke(initial_state)
+        config = {"configurable": {"thread_id": "monitor_global"}}
+        final_state = await self.graph.ainvoke(initial_state, config=config)
 
         flagged = final_state["flagged_players"]
 

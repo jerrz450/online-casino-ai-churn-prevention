@@ -18,6 +18,7 @@ from typing import Optional, List, Dict
 from .player_types import PlayerTypeProfile, PLAYER_TYPES, get_player_type
 from .behavior_models import PlayerBehaviorState
 from .event_generator import generate_bet_event
+from .player_preferences_generator import initialize_player_preferences
 from backend.services.domain.player_context_serializer import PlayerContextSerializer
 from backend.orchestration.agent_coordinator import get_coordinator
 from ..services.domain.knowledge_service import store_player_snapshot, update_outcome
@@ -85,49 +86,58 @@ class PlayerSimulator:
             ("casual", 0.60),
         ]
 
+        players_to_insert = []
+        player_ids = []
+
         for player_id in range(1, self.num_players + 1):
 
-            # Assign player type based on distribution
-            rand = random.random() # random float beetwen 0.0 and 1.0
-            cumulative = 0.0 # 0.10 
-            assigned_type = "casual"  # Default
- 
+            rand = random.random()
+            cumulative = 0.0
+            assigned_type = "casual"
+
             for type_name, probability in type_distribution:
-                
+
                 cumulative += probability
 
-                # This is here so that we assign and choose the player based on the rand, (If rand = 0.07 → whale, because rand <= randn (0.15))
-                # If rand is not lower than current random number, we go the next player type and this probability accumulates
                 if rand <= cumulative:
                     assigned_type = type_name
                     break
-            
-            # This is here so we can pick the player type based on current assigned_type from previously
+
             player_type = get_player_type(assigned_type)
 
-            # Initialize behavior state 
             behavior_state = PlayerBehaviorState()
-            behavior_state.current_bankroll = player_type.typical_bankroll # initialize current bankroll state with the bankroll from player type
-            behavior_state.session_start_bankroll = player_type.typical_bankroll # initialize the current session start bankroll
+            behavior_state.current_bankroll = player_type.typical_bankroll
+            behavior_state.session_start_bankroll = player_type.typical_bankroll
 
-            # Create player
             player = SimulatedPlayer(
                 player_id=player_id,
                 player_type=player_type,
                 behavior_state=behavior_state,
             )
 
-            # Schedule first session randomly in next minute (for quick simulation start)
             player.next_session_start = datetime.now(timezone.utc) + timedelta(
                 seconds=random.randint(0, 60)
             )
 
             self.players[player_id] = player
 
+            players_to_insert.append({
+                "player_id": player_id,
+                "player_type": player_type.type_name,
+                "ltv": 0.0
+            })
+            player_ids.append(player_id)
+
         print(f"== Created {self.num_players} players ==")
         print(f"  - Whales: {sum(1 for p in self.players.values() if p.player_type.type_name == 'whale')}")
         print(f"  - Grinders: {sum(1 for p in self.players.values() if p.player_type.type_name == 'grinder')}")
         print(f"  - Casuals: {sum(1 for p in self.players.values() if p.player_type.type_name == 'casual')}")
+
+        from backend.db.postgres import get_db
+        db = get_db()
+        db.upsert_players_batch(players_to_insert)
+
+        initialize_player_preferences(player_ids)
 
 
     async def start_player_session(self, player: SimulatedPlayer):
@@ -417,12 +427,23 @@ class PlayerSimulator:
 
         return True
 
-async def run_basic_simulation():
+async def run_basic_simulation(num_players : int = 100):
 
-    simulator = PlayerSimulator(num_players=100)
+    simulator = PlayerSimulator(num_players=num_players)
     simulator.initialize_players ()
     await simulator.run_simulation(tick_interval_seconds=2.0)
 
 if __name__ == "__main__":
-    
-    asyncio.run(run_basic_simulation())
+
+    import sys
+    import platform
+
+    if len(sys.argv) > 1:
+        num_players = int(sys.argv[1])
+    else:
+        num_players = 100
+
+    if platform.system() == 'Windows':
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
+    asyncio.run(run_basic_simulation(num_players))

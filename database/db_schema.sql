@@ -55,7 +55,9 @@ CREATE TABLE monitor_events (
       push_ok BOOLEAN DEFAULT true,
       language VARCHAR(10) DEFAULT 'en',
       do_not_disturb BOOLEAN DEFAULT false,
-      opted_out_marketing BOOLEAN DEFAULT false
+      opted_out_marketing BOOLEAN DEFAULT false,
+      monthly_bonus_total DECIMAL(10,2) DEFAULT 0,
+      last_intervention_at TIMESTAMPTZ
   );
 
   -- Monthly bonus tracking (compliance)

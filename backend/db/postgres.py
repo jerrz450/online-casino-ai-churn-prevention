@@ -120,20 +120,30 @@ class Database:
 
             return dict(row._mapping) if row else None
 
-    def check_cooldown(self, player_id: int, hours: int = 6) -> bool:
+    def check_cooldown(self, player_id: int, hours: int = 6) -> dict:
 
         engine = get_engine()
+
         query = text("SELECT last_intervention_at FROM player_preferences WHERE player_id = :player_id")
-        
+
         with engine.begin() as conn:
             result = conn.execute(query, {"player_id": player_id})
             row = result.first()
 
-            if not row or not row.last_intervention_at:
-                return True
-            
+            if not row:
+                return {"can_send": True, "reason": "player_not_found"}
+
+            if not row.last_intervention_at:
+                return {"can_send": True, "reason": "no_previous_intervention"}
+
             elapsed = (datetime.now() - row.last_intervention_at).total_seconds() / 3600
-            return elapsed >= hours
+            can_send = elapsed >= hours
+
+            return {
+                "can_send": can_send,
+                "reason": "cooldown_passed" if can_send else "in_cooldown",
+                "hours_since_last": round(elapsed, 2)
+            }
         
 
     def create_monitor_event(self, player_id: int, decision: str, decision_source: str, player_context: dict | str):                               

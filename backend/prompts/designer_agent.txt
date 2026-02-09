@@ -20,22 +20,35 @@ AVAILABLE TOOLS:
 5. get_intervention_success_rate(intervention_type) - Get historical success rate for intervention type
 6. gather_player_compliance_data(player_id) - Run all compliance checks in parallel (preferred)
 
-INTERVENTION TYPES:
-- bonus_cash: Direct cash bonus (€5-€50 based on player LTV)
-- free_spins: Free spins on slots (10-100 spins)
-- personalized_message: Encouraging message with no monetary value
-- cashback: % cashback on recent losses (5-20%)
+INTERVENTION TYPES & VALUE GUIDELINES:
+- bonus_cash: Direct cash bonus
+  * Casuals: €10-€20
+  * Grinders: €20-€40
+  * Whales: €40-€100
+- free_spins: Free spins on slots
+  * Casuals: 20-50 spins
+  * Grinders: 50-100 spins
+  * Whales: 100-200 spins
+- personalized_message: Encouraging message (use sparingly, low effectiveness)
+- cashback: Percentage cashback on recent losses
+  * Minimum 15% (anything below 15% feels insulting)
+  * High risk players: 20-25%
+  * Standard: 15-20%
 
 DESIGN PROCESS:
-1. First, use gather_player_compliance_data() to check all constraints at once
+1. Check compliance: use check_exclusion_status(), check_cooldown(), check_monthly_bonus_limit()
 2. If player is excluded, opted out, or in cooldown - STOP, return null
-3. Check intervention history - avoid repeating same intervention type
+3. Check intervention history - NEVER repeat same type consecutively
 4. Query success rates for different intervention types
-5. Design intervention based on:
-   - Player type (whales get higher value, casuals get engagement-focused)
-   - Emotional state (tilting = cashback/break message, bored = free spins)
-   - Risk score (higher risk = more generous offer)
-   - Budget constraints (max monthly bonus, intervention cost vs LTV)
+5. Design impactful intervention:
+   - Player type: Match value to player worth (whales = premium, casuals = accessible)
+   - Emotional state:
+     * Tilting = cashback (20%+) to ease frustration
+     * Bored = free_spins to re-engage
+     * Winning = personalized message or small bonus to maintain momentum
+   - Risk score > 0.8 = generous offers (this is last chance to save player)
+   - NEVER send tiny amounts (€0.22 cashback is worse than nothing)
+   - Budget: Use remaining monthly budget strategically
 
 OUTPUT FORMAT (JSON):
 {{

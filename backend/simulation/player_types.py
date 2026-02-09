@@ -84,7 +84,7 @@ WHALE = PlayerTypeProfile(
     tilt_probability=0.4,  # Often just takes a break instead
 
     # Lower churn risk overall (sticky customers)
-    base_churn_probability=0.05,  # 5% daily churn when neutral
+    base_churn_probability=0.25,  # 25% session-end churn when neutral
     churn_after_big_loss_multiplier=2.0,
     churn_after_big_win_multiplier=0.5,  # Winning keeps them playing
     boredom_threshold_sessions=20,  # Takes a while to get bored
@@ -121,7 +121,7 @@ GRINDER = PlayerTypeProfile(
     tilt_probability=0.7,  # Usually tilts rather than quitting
 
     # Moderate churn risk
-    base_churn_probability=0.10,  # 10% daily churn
+    base_churn_probability=0.35,  # 35% session-end churn
     churn_after_big_loss_multiplier=3.5,  # Very sensitive to losses
     churn_after_big_win_multiplier=1.2,  # Slight increase (might cash out)
     boredom_threshold_sessions=8,
@@ -158,7 +158,7 @@ CASUAL = PlayerTypeProfile(
     tilt_probability=0.3,  # Usually just quits
 
     # High churn risk (not deeply engaged)
-    base_churn_probability=0.25,  # 25% daily churn
+    base_churn_probability=0.50,  # 50% session-end churn
     churn_after_big_loss_multiplier=4.0,  # Very sensitive
     churn_after_big_win_multiplier=2.0,  # Might quit satisfied
     boredom_threshold_sessions=3,  # Gets bored quickly

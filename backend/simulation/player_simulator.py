@@ -65,6 +65,12 @@ class PlayerSimulator:
 
         self.coordinator = get_coordinator(self)
 
+        from backend.services.domain.intervention_evaluator import get_evaluator
+        self.evaluator = get_evaluator()
+
+        from backend.services.domain.event_broadcaster import get_broadcaster
+        self.broadcaster = get_broadcaster()
+
     def initialize_players(self):
 
         """
@@ -116,7 +122,7 @@ class PlayerSimulator:
             )
 
             player.next_session_start = datetime.now(timezone.utc) + timedelta(
-                seconds=random.randint(0, 60)
+                seconds=random.randint(0, 10)
             )
 
             self.players[player_id] = player
@@ -170,7 +176,11 @@ class PlayerSimulator:
         player.next_session_start = datetime.now(timezone.utc) + timedelta(hours=actual_hours)
 
         session_stats = player.behavior_state.calculate_session_result()
-        print(f"[Player {player.player_id}] Session ended: {session_stats['bets']} bets, €{session_stats['profit_loss']:.2f} P/L")
+        print(f"[Player {player.player_id}] Session ended: {session_stats['bets']} bets, €{session_stats['profit_loss']:.2f} P/L, State: {player.behavior_state.emotional_state.value}")
+
+        churned = await self.check_and_handle_churn(player)
+        if not churned:
+            print(f"[Player {player.player_id}] Did not churn - will return later")
 
 
     async def check_and_handle_churn(self, player: SimulatedPlayer) -> bool:
@@ -197,6 +207,8 @@ class PlayerSimulator:
 
             if player.last_snapshot_id:
                 await update_outcome(player.last_snapshot_id, outcome="churned")
+
+            await self.broadcaster.broadcast_player_churned(player.player_id)
 
             print(f"[WARNING] [Player {player.player_id}] CHURNED - Reason: {reason.value}")
             print(f" Stats: €{player.behavior_state.net_profit_loss:.2f} P/L, {player.behavior_state.sessions_completed} sessions")
@@ -233,9 +245,6 @@ class PlayerSimulator:
 
         # Add serialized context for Monitor agent
         bet_event["monitor_context"] = PlayerContextSerializer.to_monitor_context(player)
-
-        # Check for churn after each bet
-        await self.check_and_handle_churn(player)
 
         return bet_event
 
@@ -295,9 +304,26 @@ class PlayerSimulator:
                 events = await self.simulation_tick()
 
                 if events:
+                    print(f"\n[Tick {tick_count}] Generated {len(events)} bet events")
+
+                    for event in events:
+                        await self.broadcaster.broadcast_bet_event(event)
+
                     await self.coordinator.handle_events(events)
 
-                    print(f"\n[Tick {tick_count}] Generated {len(events)} bet events")
+                if tick_count % 50 == 0:
+                    self.evaluator.evaluate_recent_interventions(self)
+
+                    active_players = len([p for p in self.players.values() if p.is_active])
+                    churned_count = len([p for p in self.players.values() if p.behavior_state.has_churned])
+
+                    await self.broadcaster.broadcast_simulation_stats({
+                        "tick": tick_count,
+                        "active_players": active_players,
+                        "churned_players": churned_count,
+                        "total_bets": self.total_bets_generated,
+                        "total_interventions": self.total_interventions_applied
+                    })
 
                     # # Sample: show a few events
                     for event in events[:3]:  # Show first 3

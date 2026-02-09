@@ -25,6 +25,9 @@ class AgentCoordinator:
         if not flagged_player_ids:
             return
 
+        flagged_player_ids = list(set(flagged_player_ids))
+        print(f"[Coordinator] Processing {len(flagged_player_ids)} unique flagged players")
+
         tasks = []
         players = []
 
@@ -43,8 +46,21 @@ class AgentCoordinator:
         for player, risk_score in zip(players, risk_scores):
 
             if risk_score > 0.7:
-                
+
                 print(f"[Coordinator] Player {player.player_id} HIGH RISK ({risk_score:.2f}) - needs intervention")
+
+                cooldown_check = self.db.check_cooldown(player.player_id, hours=6)
+                if not cooldown_check["can_send"]:
+                    last_sent = cooldown_check.get("last_sent_at", "unknown")
+                    print(f"[Coordinator] Player {player.player_id} in cooldown (last sent: {last_sent}) - skipping intervention")
+                    continue
+
+                print(f"[Coordinator] Player {player.player_id} passed cooldown check - designing intervention")
+
+                import random
+                if random.random() > 0.7:
+                    print(f"[Coordinator] Player {player.player_id} not selected for intervention (resource constraints)")
+                    continue
 
                 from backend.services.domain.player_context_serializer import PlayerContextSerializer
 
@@ -55,6 +71,9 @@ class AgentCoordinator:
                 if intervention:
 
                     print(f"[Coordinator] Designed intervention: {intervention}")
+
+                    from backend.services.domain.event_broadcaster import get_broadcaster
+                    await get_broadcaster().broadcast_intervention(player.player_id, intervention, risk_score)
 
                     intervention_id = self.db.create_intervention(
                         player_id=player.player_id,

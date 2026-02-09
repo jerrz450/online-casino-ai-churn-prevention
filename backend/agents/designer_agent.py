@@ -163,31 +163,64 @@ class DesignerAgent:
 
         await self._ensure_initialized()
 
+        if self.agent is None:
+            raise RuntimeError("Agent initialization failed")
+
         from pathlib import Path
 
         prompt_path = Path(__file__).parent.parent / "prompts" / "designer_agent.txt"
         prompt_template = prompt_path.read_text()
 
+        player_id = player_context.get("player_id")
+        player_type = player_context.get("player_type")
+        emotional_state = player_context.get("emotional_state")
+        current_bankroll = player_context.get("current_bankroll", 0)
+        net_profit_loss = player_context.get("net_profit_loss", 0)
+        consecutive_losses = player_context.get("consecutive_losses", 0)
+        sessions_completed = player_context.get("sessions_completed", 0)
+
         prompt = prompt_template.format(
-            player_id=player_context.get("player_id"),
-            player_type=player_context.get("player_type"),
-            risk_score=risk_score,
-            emotional_state=player_context.get("emotional_state"),
-            current_bankroll=player_context.get("current_bankroll", 0),
-            net_profit_loss=player_context.get("net_profit_loss", 0),
-            consecutive_losses=player_context.get("consecutive_losses", 0),
-            sessions_completed=player_context.get("sessions_completed", 0)
-        )
+                player_id=player_id,
+                player_type=player_type,
+                risk_score=risk_score,
+                emotional_state=emotional_state,
+                current_bankroll=current_bankroll,
+                net_profit_loss=net_profit_loss,
+                consecutive_losses=consecutive_losses,
+                sessions_completed=sessions_completed,
+            )
         
         from langchain_core.messages import HumanMessage
+        from backend.db.setup_checkpoints import get_recent_messages_checkpoint
 
-        player_id = player_context.get("player_id")
-        config = {"configurable": {"thread_id": f"designer_player_{player_id}"}}
+        thread_id = f"designer_player_{player_id}"
+        config = {"configurable": {"thread_id": thread_id}} 
 
-        result = await self.agent.ainvoke({
-                "messages": [HumanMessage(content=prompt)]
-            }, config=config)
+        past_messages = await get_recent_messages_checkpoint(self.checkpointer, thread_id, limit=5)
+        print("CHECKPOINT MESSAGES", past_messages)
+        
+        new_message = HumanMessage(content=prompt)
+        all_messages = past_messages + [new_message]
+        
+        result = await self.agent.ainvoke({"messages": all_messages}, config = config)
 
-        return result
-     
+        import json
+        import re
+
+        last_message = result["messages"][-1].content
+        print(f"[Designer] Raw LLM response: {last_message[:200]}...")
+
+        json_match = re.search(r'\{[\s\S]*\}', last_message)
+        if json_match:
+            try:
+                intervention_data = json.loads(json_match.group())
+                print(f"[Designer] Parsed intervention: {intervention_data}")
+                return intervention_data
+            except json.JSONDecodeError as e:
+                print(f"[Designer] Failed to parse JSON: {e}")
+                print(f"[Designer] Attempted to parse: {json_match.group()}")
+                return None
+
+        print(f"[Designer] No JSON found in response")
+        return None
      

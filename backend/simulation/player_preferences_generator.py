@@ -13,8 +13,8 @@ def generate_player_preferences(player_id: int) -> dict:
         "sms_ok": random.choice([True, True, False]),
         "push_ok": random.choice([True, True, True, True, False]),
         "language": random.choice(["en", "en", "en", "sl", "de"]),
-        "do_not_disturb": random.choice([False, False, False, False, False, True]),
-        "opted_out_marketing": random.choice([False, False, False, False, True])
+        "do_not_disturb": False,
+        "opted_out_marketing": False
     }
 
 def initialize_player_preferences(player_ids: list[int]):

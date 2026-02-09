@@ -18,7 +18,7 @@ from backend.db.setup_checkpoints import connect_to_checkpoints
 from backend.db.postgres import get_db
 from backend.db.connection import get_engine
 from pathlib import Path
-from backend.agents.pydantic_models.monitor_models import MonitorDecision
+from backend.models.monitor_models import MonitorDecision
 import json
 
 class MonitorState(TypedDict):
@@ -218,6 +218,9 @@ class MonitorAgent:
 
         if flagged:
             print(f"[Monitor] Flagged {len(flagged)} players: {flagged}")
+
+            from backend.services.domain.event_broadcaster import get_broadcaster
+            await get_broadcaster().broadcast_monitor_flag(flagged)
 
         return flagged
 

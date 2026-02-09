@@ -26,7 +26,35 @@ async def connect_to_checkpoints():
     conn = await AsyncConnection.connect(conn_string, autocommit=True, prepare_threshold=0)
     return AsyncPostgresSaver(conn)
 
+async def get_recent_messages_checkpoint(checkpointer, thread_id: str, limit: int = 10):
+
+    config = {"configurable": {"thread_id": thread_id}}
+
+    try:
+        checkpoint_tuple = await checkpointer.aget_tuple(config)
+
+        if not checkpoint_tuple:
+            return []
+
+        checkpoint = checkpoint_tuple.checkpoint
+
+        if "channel_values" in checkpoint and "messages" in checkpoint["channel_values"]:
+            messages = checkpoint["channel_values"]["messages"]
+
+        elif "messages" in checkpoint:
+            messages = checkpoint["messages"]
+
+        else:
+            return []
+
+        return messages[-limit:] if messages else []
+
+    except Exception as e:
+        print(f"Failed to retrieve checkpoint memory: {e}")
+        return []
+
 def main():
+    
     import asyncio
     import platform
 

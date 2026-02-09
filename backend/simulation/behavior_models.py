@@ -69,6 +69,7 @@ class PlayerBehaviorState:
     # Intervention tracking
     interventions_received: list = field(default_factory=list)
     last_intervention_accepted: Optional[str] = None
+    bets_since_intervention: int = 0
 
     # Flags
     has_churned: bool = False
@@ -76,7 +77,7 @@ class PlayerBehaviorState:
 
 
     def record_bet_outcome(self, bet_amount: float, won: bool, payout: float = 0.0):
-        
+
         """
         Update state after a bet completes.
 
@@ -85,6 +86,11 @@ class PlayerBehaviorState:
 
         self.bets_this_session += 1
         self.total_wagered += bet_amount
+
+        if self.emotional_state == EmotionalState.RECOVERING:
+            self.bets_since_intervention += 1
+            if self.bets_since_intervention >= 5:
+                self.emotional_state = EmotionalState.NEUTRAL
 
         if won:
 
@@ -193,6 +199,7 @@ class PlayerBehaviorState:
         # Transition to recovering state (gives them another chance)
         self.emotional_state = EmotionalState.RECOVERING
         self.last_intervention_accepted = intervention_type
+        self.bets_since_intervention = 0
 
         # Reset negative streaks
         self.consecutive_losses = 0
@@ -216,6 +223,11 @@ class PlayerBehaviorState:
         if self.current_bankroll <= 0:
 
             return True, ChurnReason.BANKRUPT
+
+        # Severe tilt - even intervention can't save them
+        if self.consecutive_losses > 8 and self.emotional_state == EmotionalState.RECOVERING:
+            if random.random() < 0.35:
+                return True, ChurnReason.TILT_RAGE_QUIT
 
         # Tilt rage quit (high probability when tilting)
         if self.emotional_state == EmotionalState.TILTING:

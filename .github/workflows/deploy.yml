@@ -1,0 +1,41 @@
+name: Deploy to VM
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Deploy to VM
+      uses: appleboy/ssh-action@v1.0.0
+      with:
+        host: ${{ secrets.VM_HOST }}
+        username: ${{ secrets.VM_USER }}
+        key: ${{ secrets.VM_SSH_KEY }}
+        script: |
+          cd /opt/casino_churn
+
+          echo "📦 Pulling latest code..."
+          git pull origin main
+
+          echo "🔄 Stopping services..."
+          docker-compose down
+
+          echo "🏗️ Building images..."
+          docker-compose build
+
+          echo "🚀 Starting services..."
+          docker-compose up -d
+
+          echo "⏳ Waiting for services to start..."
+          sleep 10
+
+          echo "✅ Checking service status..."
+          docker-compose ps
+
+          echo "📊 Service logs:"
+          docker-compose logs --tail=50

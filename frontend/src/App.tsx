@@ -5,7 +5,8 @@ import { PlayerGrid } from './components/PlayerGrid'
 import { getRiskScore } from './utils/player'
 
 export default function App() {
-  const wsUrl = import.meta.env.VITE_WS_URL ?? 'ws://localhost:8000/ws'
+  // Use relative WebSocket URL - nginx will proxy to backend
+  const wsUrl = import.meta.env.VITE_WS_URL ?? `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws`
   const { connected, players, stats } = useWebSocket(wsUrl)
 
   const playerList = useMemo(

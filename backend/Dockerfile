@@ -14,4 +14,4 @@ COPY docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh
 
 ENTRYPOINT ["/docker-entrypoint.sh"]
-CMD ["python", "-m", "backend.simulation.player_simulator"]
+CMD ["python", "-m", "backend.main"]

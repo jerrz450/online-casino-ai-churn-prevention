@@ -116,39 +116,42 @@ class BetEventGenerator:
         Faster when tilting (frantic), slower when bored.
         """
         # Base delay depends on game type (slots are fast)
-        base_delay = 5.0  # 5 seconds average for slots
 
         if self.behavior_state.emotional_state == EmotionalState.TILTING:
             # Frantic, rapid betting
-            delay = random.uniform(2.0, 4.0)
+            delay = random.uniform(0.1, 0.3)
 
         elif self.behavior_state.emotional_state == EmotionalState.BORED:
             # Slow, disengaged
-            delay = random.uniform(8.0, 15.0)
+            delay = random.uniform(0.5, 1.0)
 
         else:
             # Normal variance
-            delay = random.uniform(3.0, 7.0)
+            delay = random.uniform(0.2, 0.6)
 
         return delay
 
-
     def should_end_session(self) -> bool:
+
         """
+
         Determine if player should end their current session.
 
         Based on:
         - Bets completed vs typical session length
         - Bankroll state (bankrupt = forced end)
         - Emotional state (tilting might play longer, bored quits early)
+        
         """
+
         # Bankrupt = must quit
         if self.behavior_state.current_bankroll <= 0:
             return True
 
         # Check if reached typical session length
         bets_done = self.behavior_state.bets_this_session
-        typical_length = self.player_type.avg_bets_per_session
+        # Add more variance to session length (0.5x to 1.5x for demo variety)
+        typical_length = self.player_type.avg_bets_per_session * random.uniform(0.5, 1.5)
 
         # Emotional state affects session length
         if self.behavior_state.emotional_state == EmotionalState.TILTING:

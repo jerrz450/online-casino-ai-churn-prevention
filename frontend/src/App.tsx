@@ -51,10 +51,6 @@ export default function App() {
             <h1 className="app-title">Casino Churn Detection</h1>
             <p className="app-subtitle">Real-time AI-powered churn prevention</p>
           </div>
-          <div className="header-meta">
-            <span>Profiles tracked: {snapshot.tracked}</span>
-            <span>Tick {stats.tick}</span>
-          </div>
         </header>
 
         <Stats

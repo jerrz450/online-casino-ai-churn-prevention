@@ -89,6 +89,16 @@ class EventBroadcaster:
             **stats
         })
 
+    async def broadcast_initial_players(self, player_ids: list):
+        if not self.manager:
+            return
+
+        await self.manager.broadcast({
+            "type": "initial_players",
+            "timestamp": datetime.utcnow().isoformat(),
+            "player_ids": player_ids
+        })
+
 _broadcaster = None
 
 def get_broadcaster():

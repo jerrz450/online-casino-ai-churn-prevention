@@ -22,6 +22,23 @@ export function useWebSocket(url: string) {
       const data: WebSocketMessage = JSON.parse(event.data)
 
       switch (data.type) {
+        case 'initial_players': {
+          setPlayers(prev => {
+            const initialPlayers: Record<number, PlayerState> = {}
+            data.player_ids.forEach((pid: number) => {
+              initialPlayers[pid] = {
+                player_id: pid,
+                last_bet: null,
+                bet_history: [],
+                intervention: null,
+                churned: false,
+                flagged_by_monitor: false
+              }
+            })
+            return initialPlayers
+          })
+          break
+        }
         case 'bet_event': {
           setPlayers(prev => {
             const pid = data.player_id

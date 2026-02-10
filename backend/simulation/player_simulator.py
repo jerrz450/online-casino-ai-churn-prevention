@@ -122,7 +122,7 @@ class PlayerSimulator:
             )
 
             player.next_session_start = datetime.now(timezone.utc) + timedelta(
-                seconds=random.randint(0, 10)
+                seconds=random.randint(0, 30)
             )
 
             self.players[player_id] = player
@@ -166,14 +166,11 @@ class PlayerSimulator:
         player.is_active = False
         player.last_session_end = datetime.now(timezone.utc)
 
-        # Calculate when next session should start based on frequency
-        # session_frequency_per_day = how many sessions per day
-        hours_between_sessions = 24.0 / player.player_type.session_frequency_per_day
+        # Calculate when next session should start (demo mode: seconds instead of hours)
+        # For demo: make players return quickly with high variance to avoid sync
+        seconds_between_sessions = random.randint(3, 45)
 
-        # Add some variance (+/- 50%)
-        actual_hours = hours_between_sessions * random.uniform(0.5, 1.5)
-
-        player.next_session_start = datetime.now(timezone.utc) + timedelta(hours=actual_hours)
+        player.next_session_start = datetime.now(timezone.utc) + timedelta(seconds=seconds_between_sessions)
 
         session_stats = player.behavior_state.calculate_session_result()
         print(f"[Player {player.player_id}] Session ended: {session_stats['bets']} bets, €{session_stats['profit_loss']:.2f} P/L, State: {player.behavior_state.emotional_state.value}")
@@ -309,7 +306,8 @@ class PlayerSimulator:
                     for event in events:
                         await self.broadcaster.broadcast_bet_event(event)
 
-                    await self.coordinator.handle_events(events)
+                    # Run coordinator in background to avoid blocking bet generation
+                    asyncio.create_task(self.coordinator.handle_events(events))
 
                 if tick_count % 50 == 0:
                     self.evaluator.evaluate_recent_interventions(self)

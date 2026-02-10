@@ -1,5 +1,5 @@
 import { PlayerState } from '../types'
-import { formatCurrency, getRecentBets, getRiskScore, resolvePlayerStatus } from '../utils/player'
+import { formatCurrency, getRiskScore, getRecentBets, resolvePlayerStatus } from '../utils/player'
 import { StatusBadge } from './StatusBadge'
 
 interface PlayerDetailModalProps {
@@ -10,7 +10,7 @@ interface PlayerDetailModalProps {
 export function PlayerDetailModal({ player, onClose }: PlayerDetailModalProps) {
   const status = resolvePlayerStatus(player)
   const risk = Math.round(getRiskScore(player) * 100)
-  const recentBets = getRecentBets(player, 6)
+  const recentBets = getRecentBets(player, 10)
   const betHistory = player.bet_history || []
   const totalWagered = betHistory.reduce((sum, bet) => sum + bet.amount, 0)
   const wins = betHistory.filter(bet => bet.won).length
@@ -28,7 +28,7 @@ export function PlayerDetailModal({ player, onClose }: PlayerDetailModalProps) {
       >
         <header className="modal-header">
           <div>
-            <p className="eyebrow">Player profile</p>
+            <p className="eyebrow">Player Profile</p>
             <h2>Player #{player.player_id}</h2>
           </div>
           <div className="modal-header-actions">
@@ -41,91 +41,114 @@ export function PlayerDetailModal({ player, onClose }: PlayerDetailModalProps) {
 
         <div className="modal-body">
           <section className="modal-section">
-            <h3 className="section-title">Snapshot</h3>
+            <h3 className="section-title">Player Stats</h3>
             <div className="info-grid">
-              <InfoTile label="Risk" value={`${risk}%`} />
-              <InfoTile label="Total wagers" value={formatCurrency(totalWagered)} />
-              <InfoTile label="Average bet" value={formatCurrency(avgBet)} />
-              <InfoTile label="Win rate" value={betHistory.length ? `${winRate}%` : 'No bets'} />
+              <InfoTile label="Churn Risk Score" value={`${risk}%`} />
+              <InfoTile label="Current Status" value={status.label} />
+              <InfoTile label="Total Wagered" value={formatCurrency(totalWagered)} />
+              <InfoTile label="Average Bet" value={formatCurrency(avgBet)} />
+              <InfoTile label="Win Rate" value={betHistory.length ? `${winRate}% (${wins}/${betHistory.length})` : 'No bets'} />
+              <InfoTile label="Total Bets" value={betHistory.length.toString()} />
             </div>
           </section>
 
           <section className="modal-section">
-            <h3 className="section-title">Monitoring</h3>
+            <h3 className="section-title">Monitoring Status</h3>
             <div className="info-grid">
-              <InfoTile label="Flagged" value={player.flagged_by_monitor ? 'Yes' : 'No'} />
+              <InfoTile label="Flagged by Monitor" value={player.flagged_by_monitor ? 'Yes' : 'No'} />
               <InfoTile label="Churned" value={player.churned ? 'Yes' : 'No'} />
-              <InfoTile label="Intervention" value={player.intervention ? 'Scheduled' : 'None'} />
-              <InfoTile label="Bets tracked" value={betHistory.length.toString()} />
+              <InfoTile label="Intervention Status" value={player.intervention ? 'Active' : 'None'} />
             </div>
-            {player.flagged_by_monitor && (
-              <div className="alert" data-tone="info">
-                Player flagged by the risk monitor for volatility and loss patterns.
-              </div>
-            )}
-            {player.churned && (
-              <div className="alert" data-tone="critical">
-                Player marked as churned. Monitor for potential winback opportunities.
-              </div>
-            )}
           </section>
 
           {player.intervention && (
             <section className="modal-section">
-              <h3 className="section-title">Intervention plan</h3>
+              <h3 className="section-title">AI Intervention Details</h3>
               <div className="info-grid">
-                <InfoTile label="Type" value={player.intervention.type?.toUpperCase() || 'Offer'} />
-                <InfoTile label="Amount" value={formatCurrency(player.intervention.amount)} />
-                <InfoTile label="Risk score" value={`${Math.round(player.intervention.risk_score * 100)}%`} />
+                <InfoTile label="Intervention Type" value={player.intervention.type?.toUpperCase() || 'OFFER'} />
+                <InfoTile label="Offer Amount" value={formatCurrency(player.intervention.amount)} />
+                <InfoTile label="Risk at Intervention" value={`${Math.round(player.intervention.risk_score * 100)}%`} />
               </div>
-              <div className="alert" data-tone="warning">
-                {player.intervention.message}
+
+              <div style={{ marginTop: '16px' }}>
+                <div style={{ fontSize: '0.85rem', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '8px' }}>
+                  MESSAGE TO PLAYER
+                </div>
+                <div className="intervention-message">
+                  {player.intervention.message}
+                </div>
               </div>
+
               {player.intervention.reasoning && (
-                <div className="alert" data-tone="info">
-                  {player.intervention.reasoning}
+                <div style={{ marginTop: '16px' }}>
+                  <div style={{ fontSize: '0.85rem', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '8px' }}>
+                    AI REASONING
+                  </div>
+                  <div className="intervention-message" style={{ borderLeft: '3px solid var(--info)' }}>
+                    {player.intervention.reasoning}
+                  </div>
                 </div>
               )}
             </section>
           )}
 
           <section className="modal-section">
-            <h3 className="section-title">Recent bets</h3>
+            <h3 className="section-title">Betting History (Last {Math.min(recentBets.length, 10)} Bets)</h3>
             {recentBets.length === 0 ? (
               <div className="empty-state">No betting history available.</div>
             ) : (
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Amount</th>
-                    <th>Result</th>
-                    <th>Emotional state</th>
-                    <th>Payout</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {recentBets.map((bet, index) => (
-                    <tr key={`${player.player_id}-${index}`}>
-                      <td>{formatCurrency(bet.amount)}</td>
-                      <td>
-                        <span className="tag">{bet.won ? 'Won' : 'Lost'}</span>
-                      </td>
-                      <td>{bet.emotional_state}</td>
-                      <td>{bet.payout ? formatCurrency(bet.payout) : '--'}</td>
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem' }}>
+                  <thead>
+                    <tr style={{ borderBottom: '1px solid var(--border)' }}>
+                      <th style={{ textAlign: 'left', padding: '10px 8px', color: 'var(--text-muted)', fontWeight: '500' }}>Amount</th>
+                      <th style={{ textAlign: 'left', padding: '10px 8px', color: 'var(--text-muted)', fontWeight: '500' }}>Result</th>
+                      <th style={{ textAlign: 'left', padding: '10px 8px', color: 'var(--text-muted)', fontWeight: '500' }}>Payout</th>
+                      <th style={{ textAlign: 'left', padding: '10px 8px', color: 'var(--text-muted)', fontWeight: '500' }}>Emotional State</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {recentBets.map((bet, index) => (
+                      <tr key={`${player.player_id}-${index}`} style={{ borderBottom: '1px solid var(--border)' }}>
+                        <td style={{ padding: '12px 8px' }}>{formatCurrency(bet.amount)}</td>
+                        <td style={{ padding: '12px 8px' }}>
+                          <span style={{
+                            display: 'inline-block',
+                            padding: '4px 10px',
+                            borderRadius: '999px',
+                            fontSize: '0.8rem',
+                            fontWeight: '600',
+                            background: bet.won ? 'rgba(82, 196, 26, 0.1)' : 'rgba(255, 77, 79, 0.1)',
+                            color: bet.won ? 'var(--success)' : 'var(--critical)'
+                          }}>
+                            {bet.won ? 'Won' : 'Lost'}
+                          </span>
+                        </td>
+                        <td style={{ padding: '12px 8px' }}>{bet.payout ? formatCurrency(bet.payout) : '—'}</td>
+                        <td style={{ padding: '12px 8px', color: 'var(--text-muted)' }}>{bet.emotional_state}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
           </section>
 
           {player.activity_log && player.activity_log.length > 0 && (
             <section className="modal-section">
-              <h3 className="section-title">Activity log</h3>
-              <div className="activity-list">
+              <h3 className="section-title">Activity Log</h3>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                 {player.activity_log.map((item, index) => (
-                  <div key={`${item.timestamp}-${index}`} className="activity-item">
-                    <span>{formatTimestamp(item.timestamp)}</span>
+                  <div key={`${item.timestamp}-${index}`} style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    gap: '16px',
+                    fontSize: '0.85rem',
+                    color: 'var(--text-muted)',
+                    borderBottom: '1px solid var(--border)',
+                    paddingBottom: '8px'
+                  }}>
+                    <span style={{ fontWeight: '500' }}>{formatTimestamp(item.timestamp)}</span>
                     <span>{item.message}</span>
                   </div>
                 ))}

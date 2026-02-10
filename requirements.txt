@@ -58,5 +58,6 @@ urllib3==2.6.3
 uuid_utils==0.14.0
 xxhash==3.6.0
 zstandard==0.25.0
-uvicorn
+uvicorn[standard]
 fastapi
+websockets

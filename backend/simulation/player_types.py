@@ -72,7 +72,7 @@ WHALE = PlayerTypeProfile(
 
     # Long, frequent sessions
     avg_session_duration_minutes=45.0,
-    avg_bets_per_session=60,
+    avg_bets_per_session=40,
     session_frequency_per_day=2.0,
 
     # Large bankroll
@@ -109,7 +109,7 @@ GRINDER = PlayerTypeProfile(
 
     # Moderate sessions, very frequent play
     avg_session_duration_minutes=30.0,
-    avg_bets_per_session=40,
+    avg_bets_per_session=30,
     session_frequency_per_day=3.0,  # Plays multiple times daily
 
     # Controlled bankroll

@@ -17,7 +17,7 @@ jobs:
         username: ${{ secrets.VM_USER }}
         key: ${{ secrets.VM_SSH_KEY }}
         script: |
-          cd /opt/casino_churn
+          cd ~/online-casino-ai-churn-prevention
 
           echo "📦 Pulling latest code..."
           git pull origin main

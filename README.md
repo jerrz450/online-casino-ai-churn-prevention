@@ -2,7 +2,7 @@
 
 Real-time AI agents that predict and prevent player churn in online casinos before it happens.
 
-**Why I've built this?**
+## Why I've built this?**
 I've built this simulator to better understand how gambling systems operate and to explore how integrating agents and AI into such systems can influence their behavior and outcomes.
 
 ## The Problem

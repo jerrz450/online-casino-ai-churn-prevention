@@ -100,8 +100,10 @@ async def stop_simulator():
 
     if simulator_task:
         simulator_task.cancel()
+
         try:
             await simulator_task
+            
         except asyncio.CancelledError:
             pass
 

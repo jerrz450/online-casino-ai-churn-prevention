@@ -1,7 +1,10 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.middleware.cors import CORSMiddleware
-from typing import List
 import asyncio
+import json  
+from typing import List
+
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from redis.asyncio import Redis
 
 app = FastAPI()
 
@@ -13,6 +16,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+redis_client: Redis | None = None
+
 class ConnectionManager:
 
     def __init__(self):
@@ -23,27 +28,23 @@ class ConnectionManager:
         self.active_connections.append(websocket)
 
     def disconnect(self, websocket: WebSocket):
-        self.active_connections.remove(websocket)
+        if websocket in self.active_connections:
+            self.active_connections.remove(websocket)
 
     async def broadcast(self, message: dict):
 
-        for connection in self.active_connections:
-
+        for connection in list(self.active_connections):
             try:
                 await connection.send_json(message)
-            except:
+            except Exception:
                 pass
+
 
 manager = ConnectionManager()
 
-# Simulator control
-simulator_task = None
-simulator_instance = None
-is_running = False
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
-
     await manager.connect(websocket)
 
     try:
@@ -53,64 +54,56 @@ async def websocket_endpoint(websocket: WebSocket):
     except WebSocketDisconnect:
         manager.disconnect(websocket)
 
+
 @app.get("/health")
 async def health():
     return {"status": "ok"}
 
-@app.get("/simulator/status")
-async def get_simulator_status():
-    return {"running": is_running}
+event_queue: asyncio.Queue = asyncio.Queue(maxsize=10000)
 
-@app.post("/simulator/start")
-async def start_simulator(num_players: int = 50):
-    global simulator_task, simulator_instance, is_running
+async def event_processor():
 
-    if is_running:
-        return {"status": "already_running", "message": "Simulator is already running"}
+    while True:
 
-    from ..simulation.player_simulator import PlayerSimulator
-    from ..services.domain.event_broadcaster import get_broadcaster
-
-    simulator_instance = PlayerSimulator(num_players=num_players)
-    simulator_instance.initialize_players()
-
-    broadcaster = get_broadcaster()
-    broadcaster.set_manager(manager)
-
-    # Send initial player list to frontend
-    player_ids = list(simulator_instance.players.keys())
-    await broadcaster.broadcast_initial_players(player_ids)
-
-    async def run_sim():
-        global is_running
-        is_running = True
-        await simulator_instance.run_simulation(tick_interval_seconds=0.5)
-        is_running = False
-
-    simulator_task = asyncio.create_task(run_sim())
-
-    return {"status": "started", "num_players": num_players}
-
-@app.post("/simulator/stop")
-async def stop_simulator():
-    global simulator_task, is_running, simulator_instance
-
-    if not is_running:
-        return {"status": "not_running", "message": "Simulator is not running"}
-
-    if simulator_task:
-        simulator_task.cancel()
+        event = await event_queue.get()
 
         try:
-            await simulator_task
-            
-        except asyncio.CancelledError:
-            pass
+            await manager.broadcast(event)
 
-    is_running = False
-    simulator_instance = None
+        finally:
+            event_queue.task_done()
 
-    return {"status": "stopped"}
 
-def get_manager():
-    return manager
+@app.on_event("startup")
+async def start_event_processor():
+    
+    global redis_client
+    redis_client = Redis(host="redis", port=6379, db=0)
+    await redis_client.ping()
+
+@app.on_event("shutdown")
+async def shutdown():
+    
+    global redis_client
+    if redis_client is not None:
+        await redis_client.close()
+
+@app.post("/ingest/event")
+async def ingest_event(event: dict):
+
+    """
+    High-throughput event ingestion endpoint.
+    Publishes events to a Redis-backed queue for processing by worker services.
+    """
+
+    if redis_client is None:
+        raise HTTPException(status_code=503, detail="Redis not initialized")
+             
+    try:
+        payload = json.dumps(event)
+        await redis_client.rpush("ingest:events", payload)
+
+    except Exception:
+        raise HTTPException(status_code=503, detail="Failed to enqueue event")
+    
+    return {"status": "accepted"}

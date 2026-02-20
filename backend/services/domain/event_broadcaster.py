@@ -7,9 +7,11 @@ class EventBroadcaster:
         self.manager = None
 
     def set_manager(self, manager):
+        
         self.manager = manager
 
     async def broadcast_monitor_flag(self, player_ids: list):
+
         if not self.manager:
             return
 
@@ -21,6 +23,7 @@ class EventBroadcaster:
         })
 
     async def broadcast_intervention(self, player_id: int, intervention: dict, risk_score: float):
+
         if not self.manager:
             return
 
@@ -36,6 +39,7 @@ class EventBroadcaster:
         })
 
     async def broadcast_bet_event(self, bet_event: dict):
+
         if not self.manager:
             return
 
@@ -50,6 +54,7 @@ class EventBroadcaster:
         })
 
     async def broadcast_bet_batch(self, bet_events: list):
+
         if not self.manager:
             return
 
@@ -90,6 +95,7 @@ class EventBroadcaster:
         })
 
     async def broadcast_initial_players(self, player_ids: list):
+
         if not self.manager:
             return
 

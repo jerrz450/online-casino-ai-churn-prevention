@@ -22,13 +22,30 @@ services:
       timeout: 5s
       retries: 5
 
+  redis:
+    image: redis:7-alpine
+    container_name: casino_redis
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+    networks:
+      - casino-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   backend:
+    image: casino_backend_image
     build:
       context: .
       dockerfile: backend/Dockerfile
     container_name: casino_backend
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     environment:
       POSTGRES_CASINO_USER: ${POSTGRES_CASINO_USER}
@@ -44,6 +61,27 @@ services:
       PINECONE_INDEX_NAME: ${PINECONE_INDEX_NAME}
     ports:
       - "8000:8000"
+    restart: unless-stopped
+    networks:
+      - casino-network
+
+  simulator:
+    image: casino_simulator_image
+    build:
+      context: .
+      dockerfile: simulator_server/Dockerfile
+    container_name: casino_simulator
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      POSTGRES_CASINO_USER: ${POSTGRES_CASINO_USER}
+      POSTGRES_CASINO_PASSWORD: ${POSTGRES_CASINO_PASSWORD}
+      POSTGRES_CASINO_DB: ${POSTGRES_CASINO_DB}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+    ports:
+      - "8001:8001"
     restart: unless-stopped
     networks:
       - casino-network

@@ -7,7 +7,7 @@ import json
 
 sys.path.insert(0, str(Path(__file__).parent / "backend"))
 
-from backend.simulation import PlayerSimulator
+from simulation import PlayerSimulator
 
 
 async def test_serializer_integration():

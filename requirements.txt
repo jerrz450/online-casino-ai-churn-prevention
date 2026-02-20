@@ -34,7 +34,7 @@ pinecone-plugin-assistant==3.0.2
 pinecone-plugin-interface==0.0.7
 protobuf==5.29.6
 protoc-gen-openapiv2==0.0.1
-psycopg==3.3.2
+psycopg[binary]==3.3.2
 psycopg-pool==3.3.0
 psycopg2-binary==2.9.11
 pydantic==2.12.5
@@ -61,3 +61,4 @@ zstandard==0.25.0
 uvicorn[standard]
 fastapi
 websockets
+redis>=5.0.0

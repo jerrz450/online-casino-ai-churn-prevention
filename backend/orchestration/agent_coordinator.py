@@ -91,11 +91,11 @@ def get_coordinator(simulator = None) -> AgentCoordinator:
 
     global _coordinator
 
-    if _coordinator is None:
-        
+    if _coordinator is None or (simulator is not None and _coordinator.simulator is not simulator):
+
         if simulator is None:
             raise ValueError("Simulator must be provided on first call")
-        
+
         _coordinator = AgentCoordinator(simulator)
 
     return _coordinator

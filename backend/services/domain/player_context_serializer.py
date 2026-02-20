@@ -7,7 +7,7 @@ Each agent has it's own function, to convert to certain format and structure.
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from backend.simulation import SimulatedPlayer
+    from simulation import SimulatedPlayer
 
 class PlayerContextSerializer:
 

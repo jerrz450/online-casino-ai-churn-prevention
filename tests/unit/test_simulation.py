@@ -11,7 +11,7 @@ from pathlib import Path
 # Add backend to path
 sys.path.insert(0, str(Path(__file__).parent / "backend"))
 
-from backend.simulation import PlayerSimulator
+from simulation import PlayerSimulator
 
 
 async def test_simulation():

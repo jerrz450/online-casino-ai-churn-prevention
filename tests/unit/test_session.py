@@ -4,7 +4,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from backend.simulation.player_simulator import PlayerSimulator
+from simulation.player_simulator import PlayerSimulator
 
 async def test_end_session():
     sim = PlayerSimulator(num_players=1)

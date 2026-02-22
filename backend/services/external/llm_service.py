@@ -1,4 +1,4 @@
-from typing import Union
+from typing import Literal, Union, overload
 from openai import AsyncOpenAI
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel
@@ -34,6 +34,11 @@ class LLMService:
 _llm = None
 _langchain_llm = None
 
+@overload
+def get_llm(use_langchain: Literal[True]) -> ChatOpenAI: ...
+
+@overload
+def get_llm(use_langchain: Literal[False] = ...) -> LLMService: ...
 def get_llm(use_langchain: bool = False) -> Union[ChatOpenAI, LLMService]:
 
     global _llm, _langchain_llm
@@ -41,9 +46,10 @@ def get_llm(use_langchain: bool = False) -> Union[ChatOpenAI, LLMService]:
     if use_langchain:
 
         if _langchain_llm is None:
+            is_reasoning = OPENAI_MODEL.startswith("o")
             _langchain_llm = ChatOpenAI(
                 model=OPENAI_MODEL,
-                temperature=0
+                **({} if is_reasoning else {"temperature": 0})
             )
 
         return _langchain_llm

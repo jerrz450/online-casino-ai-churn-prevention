@@ -36,13 +36,14 @@ def get_time_between_bets(state: PlayerBehaviorState) -> float:
 
 
 def generate_bet_event(player_id: int, player_type: PlayerTypeProfile,
-                       state: PlayerBehaviorState) -> dict:
+                       state: PlayerBehaviorState,
+                       timestamp: datetime | None = None) -> dict:
     bet_amount = get_bet_amount(player_type, state)
 
     if bet_amount <= 0:
         return None
 
-    won  = random.random() < 0.475
+    won    = random.random() < 0.475
     payout = round(bet_amount * 2, 2) if won else 0.0
 
     state.record_bet_outcome(
@@ -53,7 +54,7 @@ def generate_bet_event(player_id: int, player_type: PlayerTypeProfile,
 
     return {
         "player_id":         player_id,
-        "timestamp":         datetime.utcnow().isoformat(),
+        "timestamp":         (timestamp or datetime.utcnow()).isoformat(),
         "game_type":         "slot",
         "bet_amount":        bet_amount,
         "won":               won,

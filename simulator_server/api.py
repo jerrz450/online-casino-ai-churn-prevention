@@ -44,24 +44,25 @@ class ConnectionManager:
             except Exception:
                 pass
 
-
 class ForwardMetrics:
 
     def __init__(self):
 
         self.start_time = time.time()
-        self.total_sent = 0
+        self.started_at = datetime.now(timezone.utc).isoformat()
+        self.total_batches = 0
+        self.total_events = 0
         self.total_success = 0
         self.total_errors = 0
         self.recent_latencies: deque = deque(maxlen=1000)
 
-    def record(self, latency_ms: float, success: bool):
-        
-        self.total_sent += 1
+    def record(self, latency_ms: float, success: bool, batch_size: int = 1):
+
+        self.total_batches += 1
+        self.total_events += batch_size
 
         if success:
             self.total_success += 1
-
         else:
             self.total_errors += 1
 
@@ -72,16 +73,17 @@ class ForwardMetrics:
         elapsed = time.time() - self.start_time
         latencies = list(self.recent_latencies)
         sorted_lat = sorted(latencies) if latencies else []
-        
+
         return {
+            "started_at": self.started_at,
             "running_seconds": round(elapsed, 1),
-            "total_sent": self.total_sent,
-            "total_success": self.total_success,
+            "total_batches": self.total_batches,
+            "total_events": self.total_events,
             "total_errors": self.total_errors,
-            "actual_rps": round(self.total_sent / elapsed, 2) if elapsed > 0 else 0.0,
+            "actual_eps": round(self.total_events / elapsed, 2) if elapsed > 0 else 0.0,
             "avg_latency_ms": round(sum(latencies) / len(latencies), 2) if latencies else 0.0,
             "p99_latency_ms": round(sorted_lat[int(len(sorted_lat) * 0.99)], 2) if sorted_lat else 0.0,
-            "error_rate_pct": round(self.total_errors / self.total_sent * 100, 2) if self.total_sent else 0.0,
+            "error_rate_pct": round(self.total_errors / self.total_batches * 100, 2) if self.total_batches else 0.0,
             "queue_depth": event_queue.qsize() if event_queue else 0,
         }
 
@@ -98,43 +100,56 @@ is_running = False
 _target_url: Optional[str] = None
 _requests_per_second: int = 10
 
-async def event_dispatcher():
-    
-    """
-    Reads all events from the queue, broadcasts to WebSocket clients,
-    and optionally forwards to an HTTP endpoint at the configured RPS.
-    """
+DISPATCH_BATCH_SIZE = 100
+DISPATCH_INTERVAL = 0.05   # seconds between batch flushes
 
-    interval = 1.0 / _requests_per_second if _target_url else 0.0
+async def event_dispatcher():
+
+    batch_url = _target_url.rstrip("/").rsplit("/", 1)[0] + "/events" if _target_url else None
 
     async with httpx.AsyncClient() as client:
 
         while is_running:
 
+            batch = []
+
             try:
-                event = await asyncio.wait_for(event_queue.get(), timeout=1.0)
+
+                first = await asyncio.wait_for(event_queue.get(), timeout=1.0)
+                batch.append(first)
 
             except asyncio.TimeoutError:
                 continue
 
-            # Always push to WebSocket
-            await manager.broadcast(event)
+            while len(batch) < DISPATCH_BATCH_SIZE:
 
-            # Forward to HTTP if configured
-            if _target_url:
+                try:
+                    batch.append(event_queue.get_nowait())
+
+                except asyncio.QueueEmpty:
+                    break
+
+            for event in batch:
+                await manager.broadcast(event)
+
+            if batch_url:
 
                 t0 = time.perf_counter()
 
                 try:
-                    resp = await client.post(_target_url, json=event, timeout=5.0)
+
+                    resp = await client.post(batch_url, json=batch, timeout=10.0)  # request
+
+                    # Metrics
                     latency_ms = (time.perf_counter() - t0) * 1000
-                    metrics.record(latency_ms, success=resp.status_code < 400)
+                    metrics.record(latency_ms, success=resp.status_code < 400, batch_size=len(batch))
 
                 except Exception:
+                    # Metrics
                     latency_ms = (time.perf_counter() - t0) * 1000
-                    metrics.record(latency_ms, success=False)
+                    metrics.record(latency_ms, success=False, batch_size=len(batch))
 
-                await asyncio.sleep(interval)
+            await asyncio.sleep(DISPATCH_INTERVAL)
 
 
 @app.websocket("/ws")
@@ -177,7 +192,11 @@ async def start_simulator(
     tick_interval_seconds: float = 0.05,
     target_url: Optional[str] = None,
     requests_per_second: int = 10,
+    mode: str = "inference", # inference | training
+    max_events: Optional[int] = None, # For testing: stop after processing this many events (across all players)
 ):
+    """ curl -X POST "http://localhost:8001/simulator/start?num_players=100&tick_interval_seconds=0.05&max_events=5000&target_url=http://backend:8000/ingest/event&mode=inference" """
+    
     global simulator_task, dispatcher_task, simulator_instance, is_running
     global metrics, event_queue, _target_url, _requests_per_second
 
@@ -189,11 +208,17 @@ async def start_simulator(
     _target_url = target_url
     _requests_per_second = requests_per_second
 
+    if target_url:
+        async with httpx.AsyncClient() as client: 
+            base = target_url.rstrip("/").rsplit("/", 1)[0]
+            await client.post(f"{base}/new-run", timeout=5.0)
+
     event_queue = asyncio.Queue()
-    metrics  = ForwardMetrics() if target_url else None
+    metrics = ForwardMetrics() if target_url else None
 
     simulator_instance = PlayerSimulator(
         num_players=num_players,
+        mode=mode,
         event_queue=event_queue,
     )
 
@@ -201,17 +226,20 @@ async def start_simulator(
 
     # Broadcast initial player list to any connected WebSocket clients
     await manager.broadcast({
-        "type":       "initial_players",
+        "type":  "initial_players",
         "timestamp":  datetime.now(timezone.utc).isoformat(),
         "player_ids": list(simulator_instance.players.keys()),
     })
 
     async def run_sim():
-        
+
         global is_running
         is_running = True
 
-        await simulator_instance.run_simulation(tick_interval_seconds=tick_interval_seconds)
+        await simulator_instance.run_simulation(
+            tick_interval_seconds=tick_interval_seconds,
+            max_events=max_events,
+        )
 
         is_running = False
 
@@ -252,11 +280,11 @@ async def stop_simulator():
 
     final_stats = metrics.snapshot() if metrics else None
 
-    is_running         = False
+    is_running = False
     simulator_instance = None
-    simulator_task     = None
-    dispatcher_task    = None
-    metrics            = None
-    event_queue        = None
+    simulator_task = None
+    dispatcher_task = None
+    metrics = None
+    event_queue = None
 
     return {"status": "stopped", "final_stats": final_stats}

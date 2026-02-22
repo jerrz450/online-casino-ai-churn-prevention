@@ -1,10 +1,15 @@
 import asyncio
-import json  
+import json
 from typing import List
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from redis.asyncio import Redis
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
+
+from backend.agents.analyst_agent import get_analyst_agent
+from backend.db.redis_client import get_redis, close_redis
+from backend.db.redis_keys import RedisKeys
 
 app = FastAPI()
 
@@ -16,7 +21,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-redis_client: Redis | None = None
+redis_client = None
 
 class ConnectionManager:
 
@@ -76,34 +81,77 @@ async def event_processor():
 
 @app.on_event("startup")
 async def start_event_processor():
-    
     global redis_client
-    redis_client = Redis(host="redis", port=6379, db=0)
+    redis_client = await get_redis()
     await redis_client.ping()
 
 @app.on_event("shutdown")
 async def shutdown():
-    
-    global redis_client
-    if redis_client is not None:
-        await redis_client.close()
+    await close_redis()
+
+@app.post("/ingest/new-run")
+async def new_run():
+    if redis_client is None:
+        raise HTTPException(status_code=503, detail="Redis not initialized")
+    await redis_client.delete(RedisKeys.CURRENT_RUN_ID)
+    return {"status": "ok"}
+
 
 @app.post("/ingest/event")
 async def ingest_event(event: dict):
 
-    """
-    High-throughput event ingestion endpoint.
-    Publishes events to a Redis-backed queue for processing by worker services.
-    """
-
     if redis_client is None:
         raise HTTPException(status_code=503, detail="Redis not initialized")
-             
+    
     try:
-        payload = json.dumps(event)
-        await redis_client.rpush("ingest:events", payload)
+        await redis_client.rpush(RedisKeys.INGEST_EVENTS, json.dumps(event))
 
     except Exception:
         raise HTTPException(status_code=503, detail="Failed to enqueue event")
     
-    return {"status": "accepted"}
+    return {"status": "accepted", "count": 1}
+
+
+@app.post("/agents/analyze")
+async def agents_analyze():
+    thread_id = "analyst_main"
+    return StreamingResponse(
+        get_analyst_agent().stream_analysis(thread_id),
+        media_type="text/event-stream",
+        headers={"X-Thread-ID": thread_id},
+    )
+
+
+class ApplyRequest(BaseModel):
+    approved_actions: list[str]
+    params: dict = {}
+
+
+@app.post("/agents/apply/{thread_id}")
+async def agents_apply(thread_id: str, body: ApplyRequest):
+    return StreamingResponse(
+        get_analyst_agent().stream_apply(thread_id, body.approved_actions, body.params),
+        media_type="text/event-stream",
+    )
+
+
+@app.post("/ingest/events")
+async def ingest_events(events: List[dict]):
+
+    if redis_client is None:
+        raise HTTPException(status_code=503, detail="Redis not initialized")
+
+    if not events:
+        return {"status": "accepted", "count": 0}
+    
+    try:
+        pipe = redis_client.pipeline()
+
+        for event in events:
+            pipe.rpush(RedisKeys.INGEST_EVENTS, json.dumps(event))
+        await pipe.execute()
+
+    except Exception:
+        raise HTTPException(status_code=503, detail="Failed to enqueue events")
+    
+    return {"status": "accepted", "count": len(events)}

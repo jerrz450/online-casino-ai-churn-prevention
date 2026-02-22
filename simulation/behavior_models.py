@@ -48,6 +48,9 @@ class PlayerBehaviorState:
     has_churned:  bool = False
     churn_reason: Optional[ChurnReason] = None
 
+    # Reduced by successful interventions — floors at 0.3 (intervention can't eliminate churn)
+    effective_churn_modifier: float = 1.0
+
 
     def record_bet_outcome(self, bet_amount: float, won: bool, payout: float,
                            tilt_threshold: int, tilt_probability: float):
@@ -127,13 +130,15 @@ class PlayerBehaviorState:
         loss_pct = (self.session_start_bankroll - self.current_bankroll) / start
         win_pct  = (self.current_bankroll - self.session_start_bankroll)  / start
 
-        if loss_pct > 0.3 and random.random() < base_churn_prob * big_loss_multiplier:
+        effective = base_churn_prob * self.effective_churn_modifier
+
+        if loss_pct > 0.3 and random.random() < effective * big_loss_multiplier:
             return True, ChurnReason.BIG_LOSS
 
-        if win_pct > 0.5 and random.random() < base_churn_prob * big_win_multiplier:
+        if win_pct > 0.5 and random.random() < effective * big_win_multiplier:
             return True, ChurnReason.BIG_WIN
 
-        if random.random() < base_churn_prob:
+        if random.random() < effective:
             return True, ChurnReason.NATURAL
 
         return False, None
@@ -163,6 +168,7 @@ class PlayerBehaviorState:
         self.bets_since_intervention = 0
         self.consecutive_losses = 0
         self.sessions_since_last_big_event = 0
+        self.effective_churn_modifier = max(0.3, self.effective_churn_modifier - 0.2)
 
 
     def mark_churned(self, reason: ChurnReason):

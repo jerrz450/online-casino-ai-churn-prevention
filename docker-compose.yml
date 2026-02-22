@@ -61,6 +61,62 @@ services:
       PINECONE_INDEX_NAME: ${PINECONE_INDEX_NAME}
     ports:
       - "8000:8000"
+    volumes:
+      - ./models:/app/models
+    restart: unless-stopped
+    networks:
+      - casino-network
+
+  worker:
+    image: casino_backend_image
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: casino_worker
+    command: python -m backend.workers.main
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      POSTGRES_CASINO_USER: ${POSTGRES_CASINO_USER}
+      POSTGRES_CASINO_PASSWORD: ${POSTGRES_CASINO_PASSWORD}
+      POSTGRES_CASINO_DB: ${POSTGRES_CASINO_DB}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      SKIP_CHECKPOINT_SETUP: "1"
+    volumes:
+      - ./models:/app/models
+    restart: unless-stopped
+    networks:
+      - casino-network
+
+  decision-worker:
+    image: casino_backend_image
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: casino_decision_worker
+    command: python -m backend.workers.decision_worker
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      POSTGRES_CASINO_USER: ${POSTGRES_CASINO_USER}
+      POSTGRES_CASINO_PASSWORD: ${POSTGRES_CASINO_PASSWORD}
+      POSTGRES_CASINO_DB: ${POSTGRES_CASINO_DB}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      SKIP_CHECKPOINT_SETUP: "1"
+    volumes:
+      - ./models:/app/models
     restart: unless-stopped
     networks:
       - casino-network

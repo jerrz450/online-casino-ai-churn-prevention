@@ -1,6 +1,7 @@
 from backend.db.connection import get_engine
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from dotenv import load_dotenv
+from psycopg.errors import UniqueViolation
 
 load_dotenv(override=True)
 
@@ -11,9 +12,14 @@ async def setup_checkpoints():
     conn_string = f"postgresql://{engine.url.username}:{engine.url.password}@{engine.url.host}:{engine.url.port}/{engine.url.database}"
 
     async with AsyncPostgresSaver.from_conn_string(conn_string) as checkpointer:
-        await checkpointer.setup()
 
-    print("Checkpoint tables created successfully")
+        try:
+            await checkpointer.setup()
+            
+        except UniqueViolation:
+            pass  # tables already exist
+
+    print("Checkpoint tables ready")
 
 async def connect_to_checkpoints():
 
@@ -50,6 +56,7 @@ async def get_recent_messages_checkpoint(checkpointer, thread_id: str, limit: in
         return messages[-limit:] if messages else []
 
     except Exception as e:
+        
         print(f"Failed to retrieve checkpoint memory: {e}")
         return []
 

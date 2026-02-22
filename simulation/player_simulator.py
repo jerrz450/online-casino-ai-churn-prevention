@@ -16,24 +16,34 @@ class SimulatedPlayer:
     player_type: PlayerTypeProfile
     behavior_state: PlayerBehaviorState
 
-    is_active: bool = False
-    next_session_start: Optional[datetime] = None
-    next_bet_at: Optional[datetime] = None
-    session_target_bets: int = 0
+    is_active:           bool              = False
+    next_session_start:  Optional[datetime] = None
+    next_bet_at:         Optional[datetime] = None
+    session_target_bets: int               = 0
+
+    # Training mode: synthetic clock tracking
+    sim_current_time:    Optional[datetime] = None  # current simulated wall time
 
 
 class PlayerSimulator:
 
-    def __init__(self, num_players: int = 50, *, event_queue=None):
-
-        self.num_players = num_players
+    def __init__(
+        self,
+        num_players: int = 50,
+        *,
+        mode: str = "inference",   # "inference" | "training"
+        event_queue=None,
+    ):
+        self.num_players  = num_players
+        self.mode         = mode
+        self.training     = mode == "training"
         self.players:  Dict[int, SimulatedPlayer] = {}
-        self.is_running = False
-        self.event_queue = event_queue
+        self.is_running   = False
+        self.event_queue  = event_queue
 
-        self.total_bets_generated       = 0
+        self.total_bets_generated        = 0
         self.total_interventions_applied = 0
-        self.churned_players: List[int] = []
+        self.churned_players: List[int]  = []
 
 
     def initialize_players(self):
@@ -56,11 +66,18 @@ class PlayerSimulator:
                 session_start_bankroll=player_type.typical_bankroll,
             )
 
+            # Training: stagger join dates over the past 30-90 days
+            sim_start = (
+                datetime.now(timezone.utc) - timedelta(days=random.randint(30, 90))
+                if self.training else None
+            )
+
             player = SimulatedPlayer(
                 player_id=player_id,
                 player_type=player_type,
                 behavior_state=state,
                 next_session_start=datetime.now(timezone.utc) + timedelta(seconds=random.randint(0, 30)),
+                sim_current_time=sim_start,
             )
 
             self.players[player_id] = player
@@ -117,6 +134,12 @@ class PlayerSimulator:
                 datetime.now(timezone.utc) + timedelta(seconds=random.randint(3, 45))
             )
 
+            # Training: advance simulated clock by realistic inter-session gap
+            if self.training and player.sim_current_time is not None:
+                gap_hours = 24 / player.player_type.session_frequency_per_day
+                noise     = random.uniform(0.5, 2.0)
+                player.sim_current_time += timedelta(hours=gap_hours * noise)
+
 
     def _generate_bet(self, player: SimulatedPlayer) -> Optional[dict]:
 
@@ -125,7 +148,8 @@ class PlayerSimulator:
         if state.current_bankroll <= 0 or state.bets_this_session >= player.session_target_bets:
             return None
 
-        event = generate_bet_event(player.player_id, player.player_type, state)
+        sim_ts = player.sim_current_time if self.training else None
+        event  = generate_bet_event(player.player_id, player.player_type, state, timestamp=sim_ts)
         if event is None:
             return None
 
@@ -161,7 +185,7 @@ class PlayerSimulator:
         return events
 
 
-    async def run_simulation(self, tick_interval_seconds: float = 0.05):
+    async def run_simulation(self, tick_interval_seconds: float = 0.05, max_events: Optional[int] = None):
 
         self.is_running = True
 
@@ -169,6 +193,9 @@ class PlayerSimulator:
 
         try:
             while self.is_running:
+                if max_events and self.total_bets_generated >= max_events:
+                    break
+
                 events = await self._tick()
 
                 if events and self.event_queue is not None:

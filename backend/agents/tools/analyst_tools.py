@@ -16,6 +16,7 @@ def get_score_distribution() -> dict:
     """Churn score stats from the last 24h of decisions: avg, p50, p90, total scored, offers sent."""
 
     with get_engine().begin() as conn:
+
         row = conn.execute(text("""
             SELECT
                 ROUND(AVG(churn_score)::numeric, 3)                                          AS avg_score,
@@ -36,6 +37,7 @@ def get_false_positive_rate() -> dict:
     """Players flagged (offer_sent) whose most recent session snapshot shows churned=0."""
 
     with get_engine().begin() as conn:
+
         row = conn.execute(text("""
             WITH latest_flagged AS (
                 SELECT DISTINCT ON (player_id) player_id
@@ -57,6 +59,7 @@ def get_false_positive_rate() -> dict:
                 )                                                                     AS false_positive_pct
             FROM latest_flagged lf
             LEFT JOIN latest_snapshots ls ON ls.player_id = lf.player_id
+                                
         """)).first()
 
     return _to_dict(row) if row else {}
@@ -68,6 +71,7 @@ def get_segment_performance() -> list:
     """Score distribution and flag rate by player type (whale/grinder/casual) over last 24h."""
 
     with get_engine().begin() as conn:
+
         rows = conn.execute(text("""
             SELECT
                 p.player_type,
@@ -90,6 +94,7 @@ def get_segment_performance() -> list:
 
 @tool
 def get_model_metrics() -> dict:
+
     """Last trained model's AUC, tree count, and feature importances."""
 
     import json, os
@@ -120,11 +125,13 @@ def get_intervention_outcomes() -> dict:
     """Breakdown of intervention outcomes: success, failed, pending counts."""
 
     with get_engine().begin() as conn:
+        
         rows = conn.execute(text("""
             SELECT COALESCE(outcome, 'pending') AS outcome, COUNT(*) AS count
             FROM interventions
             GROUP BY outcome
             ORDER BY count DESC
+                                 
         """)).fetchall()
-        
+
     return {r.outcome: r.count for r in rows}
